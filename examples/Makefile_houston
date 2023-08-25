@@ -1,0 +1,266 @@
+# ===============================================
+#    Custom Makefile for STM32WB with arm-gcc
+#                  and binutils
+# -----------------------------------------------
+#
+# USAGE:
+# 	make								Normal build
+# 	make debug					Debug build (generates dwarf data, defines debug macros)
+#
+# If exttools.mk is included
+# 	make flash					Normal build and flash to MCU
+# 	make debug flash		Debug build and flash to MCU
+# 	make openocd				Normal build and start openocd server
+# 	make debug openocd	Debug build and start openocd server
+# 	make ctags					(Re)generate ctags recursively for the directory
+# ===============================================
+
+# Target compiler
+CC=arm-none-eabi-gcc
+OBJCOPY=arm-none-eabi-objcopy
+
+# Processor Core
+MCPU=cortex-m4
+
+# ===============================================
+#            Middleware Directories
+# ===============================================
+
+# = = = = = = = =   USB Device    = = = = = = = =
+MIDDLEWARE_USB_CLASS=Middlewares/ST/STM32_USB_Device_Library/Class
+MIDDLEWARE_USB_CDC=$(MIDDLEWARE_USB_CLASS)/CDC
+MIDDLEWARE_USB_MSC=$(MIDDLEWARE_USB_CLASS)/MSC
+MIDDLEWARE_USB_CORE=Middlewares/ST/STM32_USB_Device_Library/Core
+
+# Headers
+USB_CDC_HEADERS=\
+								$(MIDDLEWARE_USB_CDC)/Inc \
+								$(MIDDLEWARE_USB_CORE)/Inc
+#
+# Sources
+USB_CDC_SOURCES=\
+								$(MIDDLEWARE_USB_CDC)/Src \
+								$(MIDDLEWARE_USB_CORE)/Src
+
+# = = = = = = = = = = = = = = = = = = = = = = = =
+
+# = = = = = = = = STM32_WPAN BLE = = = = = = = =
+# Headers
+MIDDLEWARE_STM32_WPAN=Middlewares/ST/STM32_WPAN
+MIDDLEWARE_BLE=$(MIDDLEWARE_STM32_WPAN)/ble
+MIDDLEWARE_BLETHREAD=$(MIDDLEWARE_STM32_WPAN)/interface/patterns/ble_thread
+MIDDLEWARE_BLE_CORE=$(MIDDLEWARE_BLE)/core
+MIDDLEWARE_BLE_SVC_INC=$(MIDDLEWARE_BLE)/svc/Inc
+
+STM32_WPAN_HEADERS=\
+						$(MIDDLEWARE_STM32_WPAN) \
+						$(MIDDLEWARE_BLE) \
+						$(MIDDLEWARE_BLETHREAD) \
+						$(MIDDLEWARE_BLE_CORE) \
+						$(MIDDLEWARE_BLE_SVC_INC)
+
+# Sources
+STM32_WPAN_SOURCES=
+
+# Headers and Sources
+MIDDLEWARE_BLE_SVC_SRC=$(MIDDLEWARE_BLE)/svc/Src
+MIDDLEWARE_BLETHREAD_SHCI=$(MIDDLEWARE_BLETHREAD)/shci
+MIDDLEWARE_BLETHREAD_TL=$(MIDDLEWARE_BLETHREAD)/tl
+MIDDLEWARE_BLE_CORE_AUTO=$(MIDDLEWARE_BLE_CORE)/auto
+MIDDLEWARE_BLE_CORE_TEMPLATE=$(MIDDLEWARE_BLE_CORE)/template
+MIDDLEWARE_UTILITIES=$(MIDDLEWARE_STM32_WPAN)/utilities
+UTILITIES=Utilities
+UTILITIES_LPM=$(UTILITIES)/lpm/tiny_lpm
+UTILITIES_SEQUENCER=$(UTILITIES)/sequencer
+
+STM32_WPAN_HEADERS_AND_SOURCES=\
+						$(MIDDLEWARE_BLE_SVC_SRC) \
+						$(MIDDLEWARE_BLETHREAD_SHCI) \
+						$(MIDDLEWARE_BLETHREAD_TL) \
+						$(MIDDLEWARE_BLE_CORE_AUTO) \
+						$(MIDDLEWARE_BLE_CORE_TEMPLATE) \
+						$(MIDDLEWARE_UTILITIES) \
+						$(UTILITIES_LPM) \
+						$(UTILITIES_SEQUENCER)
+# = = = = = = = = = = = = = = = = = = = = = = = =
+
+# ===============================================
+#               Build Variables
+# ===============================================
+
+# = = = = = = = = Linker Script = = = = = = = = =
+LINKER_SCRIPT=stm32wb55xx_flash_cm4.ld
+# LINKER_SCRIPT=barelibc.ld
+
+# = = = = = Source and header directories = = = = 
+SOURCE_DIRS=Src \
+						Drivers/STM32WBxx_HAL_Driver/Src \
+						$(STM32_WPAN_HEADERS_AND_SOURCES) \
+						$(USB_CDC_SOURCES) \
+						$(UTILITIES)/fsynth \
+						$(UTILITIES)/nvmem
+
+HEADER_DIRS=Inc \
+						Drivers/CMSIS/Device/ST/STM32WBxx/Include \
+						Drivers/CMSIS/Include \
+						Drivers/STM32WBxx_HAL_Driver/Inc \
+						$(STM32_WPAN_HEADERS) \
+						$(STM32_WPAN_HEADERS_AND_SOURCES) \
+						$(USB_CDC_HEADERS) \
+						$(UTILITIES)/fsynth \
+						$(UTILITIES)/nvmem
+
+ASM_SOURCES =  \
+startup_stm32wb55xx_cm4.s
+
+BIN_DIR=bin
+DEBUG_DIR=dbg
+BUILD_DIR=$(BIN_DIR)
+# Note! BUILD_DIR gets conditionally modified below.
+
+# = = = = = Custom Preprocessor Defines  = = = = =
+C_DEFS =  \
+-DUSE_HAL_DRIVER \
+-DSTM32WB55xx \
+-DUSE_FULL_LL_DRIVER
+
+# Include Flags
+IFLAGS=$(foreach var,$(HEADER_DIRS),-I$(var))
+HEADER_FILES=$(wildcard *.h $(foreach var,$(SOURCE_DIRS),$(var)/*.h))
+
+FPU = -mfpu=fpv4-sp-d16
+FLOAT-ABI = -mfloat-abi=hard
+SYSTEM_FLAGS = -mcpu=$(MCPU) -mthumb $(FPU) $(FLOAT-ABI)
+# CFLAGS definitions
+# -c : compile and assemble, no linking
+# -mthumb : use Thumb state only
+# -std=gnu11 : Use GNU C 11 language standard
+# -O0 : optimization level 0
+# The foreach loop prepends '-I' before each directory in HEADER_DIRS
+CFLAGS= $(SYSTEM_FLAGS) -c -Wall -mthumb -std=gnu11 -O0 $(C_DEFS)
+
+# Definitions Specific to the Debug Build
+DEBUG_DEFS= -g -gdwarf-2 -DDEBUG
+
+# ===============================================
+#                    Common
+#  Shouldn't need to modify below for most uses.
+# ===============================================
+
+ifneq ($(filter debug, $(MAKECMDGOALS)),)
+BUILD_DIR=$(DEBUG_DIR)
+CFLAGS += $(DEBUG_DEFS)
+else
+BUILD_DIR=$(BIN_DIR)
+endif
+
+# This ridiculous nested nightmare simply gets the name of the parent directory
+# of this Makefile
+PARENT_DIR=$(lastword $(subst /, ,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
+
+# This is the final application target
+TARGET=$(PARENT_DIR)
+TARGET_FULL=$(BUILD_DIR)/$(TARGET).elf
+TARGET_BIN=$(BUILD_DIR)/$(TARGET).bin
+MAP_FILE=$(BUILD_DIR)/$(TARGET).map
+
+# Similarly, we'll make a separate linker flags variable
+# -nostdlib : do not include standard libraries
+# --specs=file : Use specs file for library integration
+# -T script : use 'script' as the linker script
+# ============ Use the below if using libc ===============
+LIBS = -lc -lm -lnosys 
+LDFLAGS = -specs=nano.specs -T$(LINKER_SCRIPT) $(LIBS) -Wl,-Map=$(MAP_FILE),--cref,--gc-sections
+# ============   Use the below otherwise   ===============
+# LDFLAGS= --specs=nosys.specs -mcpu=$(MCPU) -mthumb -T $(LINKER_SCRIPT) -Wl,-Map,$(MAP_FILE),--cref
+
+# Preprocessor flags:
+#   -MMD : Generate depends files by replacing output file name '.o' -> '.d'
+#   -MP  : Create PHONY targets for each depend file except for main.d to prevent errors for missing headers
+#   -MF File: Specify a file name for the dependency file
+#PPFLAGS=-MMD -MP -MF"$(@:%.o=%.d)"
+PPFLAGS=-MMD
+
+# We'll automatically grab all C source files from parent directory and SOURCE_DIRS
+SOURCES=$(wildcard *.c $(foreach var,$(SOURCE_DIRS),$(var)/*.c))
+# Create target depend files in the build directory as well
+
+# Create a PHONY target for each depend file (located in their source directory)
+#.PHONY:$(patsubst %.c,%d,$(SOURCES))
+# And make each of these PHONY targets depend on the actual depend file in the build directory
+#$(patsubst %.c,%d,$(SOURCES)):$(BUILD_DIR)/$(notdir $@)
+
+# And we'll generate an object file for each source
+# OBJECTS and ASM_OBJECTS retain the directory of their corresponding source file
+OBJECTS=$(patsubst %.c,%.o,$(SOURCES))
+ASM_OBJECTS=$(patsubst %.s,%.o,$(ASM_SOURCES))
+
+# Because they don't represent actual files, we'll give them the .PHONY label so
+# they don't trigger auto-regeneration
+.PHONY: $(OBJECTS) $(ASM_OBJECTS)
+
+.PHONY: all
+all:$(TARGET_FULL)
+
+.PHONY: release
+release: all
+
+.PHONY: debug
+debug: CFLAGS += $(DEBUG_DEFS)
+debug: all
+	$(info "Debug build")
+
+# What if we make the build directory a target?  It's a file, right?
+$(BUILD_DIR):
+	-mkdir -p $(BUILD_DIR)
+
+# OBJECTS_ACTUAL is where the objects actually end up being stored
+OBJECTS_ACTUAL=$(foreach var,$(OBJECTS) $(ASM_OBJECTS),$(BUILD_DIR)/$(notdir $(var)))
+#$(OBJECTS_ACTUAL):$(OBJECTS)
+
+define bldobj
+$(1):$(2) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(IFLAGS) $(PPFLAGS) -o $(1) $(2)
+endef
+$(foreach obj,$(OBJECTS),$(eval $(call bldobj,$(BUILD_DIR)/$(notdir $(obj)),$(patsubst %.o,%.c,$(obj)))))
+$(foreach obj,$(ASM_OBJECTS),$(eval $(call bldobj,$(BUILD_DIR)/$(notdir $(obj)),$(patsubst %.o,%.s,$(obj)))))
+
+# Must define variable 'FILE' at the command line for the following to function
+# E.g. make target FILE=Src/main.c
+FILE=
+
+.PHONY: depend
+depend:
+	$(CC) -M -MF $(patsubst %.c,%.d,$(FILE)) $(CFLAGS) $(IFLAGS) $(FILE)
+
+.PHONY: defines
+defines:
+	$(CC) -E -dM $(CFLAGS) $(IFLAGS) $(FILE) -o defines.txt
+
+.PHONY: preprocess
+preprocess:
+	$(CC) -E $(CFLAGS) $(IFLAGS) $(FILE) -o .preprocess.c
+
+# I need the below to clean everything
+DEBUG_OBJECTS=$(foreach var,$(OBJECTS) $(ASM_OBJECTS),$(DEBUG_DIR)/$(notdir $(var)))
+DEBUG_TARGET=$(DEBUG_DIR)/$(TARGET).elf
+
+.PHONY: clean
+clean:
+	-rm $(OBJECTS_ACTUAL) $(TARGET_FULL) $(BUILD_DIR)/$(TARGET).map 
+	-rm $(DEBUG_OBJECTS) $(DEBUG_TARGET) $(DEBUG_DIR)/$(TARGET).map
+
+# Building the target requires all objects
+.PHONY: $(TARGET)
+$(TARGET_FULL):$(OBJECTS_ACTUAL)
+	$(CC) $(OBJECTS_ACTUAL) $(SYSTEM_FLAGS) $(LDFLAGS) -o $(TARGET_FULL)
+
+$(TARGET_BIN): $(TARGET_FULL)
+	$(OBJCOPY) -O binary $(TARGET_FULL) $@
+
+# = = = = = = = External Includes  = = = = = = = =
+#DEPENDS=$(foreach var,$(SOURCES),$(BUILD_DIR)/$(notdir $(patsubst %.c,%.d,$(var))))
+DEPENDS=$(OBJECTS_ACTUAL:.o=.d)
+-include $(DEPENDS)
+-include exttools.mk
+
